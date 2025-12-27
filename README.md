@@ -22,12 +22,14 @@ We use the **Amazon Reviews 2023** dataset:
 
 ## Project Structure
 
+```bash
 amazon-sentiment-analyser/
-├─ script.py # Main sentiment analysis script
-├─ download_data.py # Downloads required NLTK resources
-├─ Home_and_Kitchen.jsonl # Dataset (download manually)
-├─ requirements.txt # Python dependencies
-└─ README.md
+├── script.py # Main sentiment analysis script
+├── download_data.py # Downloads required NLTK resources
+├── Home_and_Kitchen.jsonl # Dataset (download manually)
+├── requirements.txt # Python dependencies
+└── README.md
+```
 
 ---
 
