@@ -11,6 +11,7 @@ from gensim.models import Word2Vec
 import numpy as np
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     classification_report, 
@@ -21,7 +22,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 # ---------- Hyperparameters ----------
-chunk_size = 100000                 # size of used data (train + test)
+chunk_size = 500000                 # size of used data (train + test)
 bow_max_features = 5000             # number of max features for BoW
 tfidf_max_features = 5000           # number of max features for TF-IDF
 w2v_max_features = 100              # number of max features for Word2Vec
@@ -69,10 +70,10 @@ df.dropna(subset=['text'], inplace=True)
 def map_sentiment(rating):
     if rating <= 2:
         return 0 # negative
-    elif rating == 3:
-        return 1 # neutral
-    else:
+    elif rating >= 4:
         return 2 # positive
+    else:
+        return 1 # netutral
 
 df['sentiment'] = df['rating'].apply(map_sentiment)
 
@@ -159,13 +160,13 @@ X_train_bow = bow.fit_transform(X_train_text)
 X_test_bow  = bow.transform(X_test_text)
 
 # TF-IDF
-tfidf = TfidfVectorizer(max_features=tfidf_max_features)
+tfidf = TfidfVectorizer(max_features=tfidf_max_features, ngram_range=(1, 2))
 X_train_tfidf = tfidf.fit_transform(X_train_text)
 X_test_tfidf  = tfidf.transform(X_test_text)
 
 # word to verctor (Word2Vec)
 sentences = [text.split() for text in X_train_text]
-w2v = Word2Vec(sentences, vector_size=w2v_max_features, window=w2v_window_size, min_count=w2v_min_count, workers=w2v_workers)
+w2v = Word2Vec(sentences, vector_size=w2v_max_features, window=w2v_window_size, min_count=w2v_min_count, workers=w2v_workers, seed=42)
 def sentence_vector(sentence):
     words = sentence.split()
     vectors = [w2v.wv[w] for w in words if w in w2v.wv]
@@ -192,6 +193,181 @@ X_train_tfidf_sel_anova = selector_tfidf.fit_transform(X_train_tfidf, y_train)
 X_test_tfidf_sel_anova  = selector_tfidf.transform(X_test_tfidf)
 
 
+# ---------- Train and Evaluate Models ------------
+# Logistic Regression + TF-IDF + ANOVA
+clf_lr = LogisticRegression(
+    max_iter=1000,  # maximum iterations for convergence
+    solver='lbfgs', # optimization algorithm
+    C=1.0,          # inverse regularization strength (smaller = stronger regularization)
+    class_weight='balanced',
+    random_state=42
+)
+
+# Train
+clf_lr.fit(X_train_tfidf_sel_anova, y_train)
+
+# Predict
+y_pred_lr = clf_lr.predict(X_test_tfidf_sel_anova)
+
+# Evaluate
+print("Logistic Regression + TF-IDF")
+print("Accuracy:", accuracy_score(y_test, y_pred_lr))
+print(classification_report(y_test, y_pred_lr))
+
+
+
+# Naive Bayes + TF-IDF + ANOVA and BoW + Chi2
+
+# TF-IDF
+clf_nb_tfidf = MultinomialNB(alpha=1.0)  # Laplace smoothing
+
+clf_nb_tfidf.fit(X_train_tfidf_sel_anova, y_train)
+y_pred_nb_tfidf = clf_nb_tfidf.predict(X_test_tfidf_sel_anova)
+
+print("Naive Bayes + TF-IDF")
+print("Accuracy:", accuracy_score(y_test, y_pred_nb_tfidf))
+print(classification_report(y_test, y_pred_nb_tfidf))
+
+# BoW (Chi2 selection)
+clf_nb_bow = MultinomialNB(alpha=1.0)
+clf_nb_bow.fit(X_train_bow_sel_chi, y_train)
+y_pred_nb_bow = clf_nb_bow.predict(X_test_bow_sel_chi)
+
+print("Naive Bayes + BoW")
+print("Accuracy:", accuracy_score(y_test, y_pred_nb_bow))
+print(classification_report(y_test, y_pred_nb_bow))
+
+
+# SVM + TF-IDF + ANOVA
+
+
+
+clf_svm = LinearSVC(
+    C=1.0,          # regularization parameter
+    max_iter=10000, # number of iterations
+    class_weight='balanced',
+    random_state=42
+)
+
+# Train
+clf_svm.fit(X_train_tfidf_sel_anova, y_train)
+
+# Predict
+y_pred_svm = clf_svm.predict(X_test_tfidf_sel_anova)
+
+# Evaluate
+print("SVM + TF-IDF")
+print("Accuracy:", accuracy_score(y_test, y_pred_svm))
+print(classification_report(y_test, y_pred_svm))
+
+# Random Forest + Word2Vec
+
+
+clf_rf = RandomForestClassifier(
+    n_estimators=200,      # number of trees
+    max_depth=None,        # maximum depth of trees
+    min_samples_split=5,   # min samples to split
+    min_samples_leaf=5,    # min samples per leaf
+    max_features='sqrt',   # features considered at each split
+    random_state=42,
+    class_weight='balanced',
+    n_jobs=-1              # use all CPU cores
+)
+
+# Train
+clf_rf.fit(X_train_w2v, y_train)
+
+# Predict
+y_pred_rf = clf_rf.predict(X_test_w2v)
+
+# Evaluate
+print("Random Forest + Word2Vec")
+print("Accuracy:", accuracy_score(y_test, y_pred_rf))
+print(classification_report(y_test, y_pred_rf))
+
+
+
+
+# --------- Evaluation Summary Table Function ----------
+
+def evaluate_for_table(model_name, y_true, y_pred):
+    report = classification_report(
+        y_true,
+        y_pred,
+        target_names=['negative','neutral','positive'],
+        output_dict=True
+    )
+    
+    return {
+        'Model': model_name,
+        'Accuracy': report['accuracy'],
+        'Precision (macro)': report['macro avg']['precision'],
+        'Recall (macro)': report['macro avg']['recall'],
+        'F1 (macro)': report['macro avg']['f1-score'],
+        'F1 (negative)': report['negative']['f1-score'],
+        'F1 (neutral)': report['neutral']['f1-score'],
+        'F1 (positive)': report['positive']['f1-score'],
+    }
+
+
+
+# --------- Summary Table of Results ----------
+results = []
+
+# Logistic Regression + TF-IDF
+results.append(
+    evaluate_for_table(
+        "LogReg + TF-IDF",
+        y_test,
+        y_pred_lr
+    )
+)
+
+# Naive Bayes + BoW
+results.append(
+    evaluate_for_table(
+        "NB + BoW",
+        y_test,
+        y_pred_nb_bow
+    )
+)
+
+# Naive Bayes + TF-IDF
+results.append(
+    evaluate_for_table(
+        "NB + TF-IDF",
+        y_test,
+        y_pred_nb_tfidf
+    )
+)
+
+# SVM + TF-IDF
+results.append(
+    evaluate_for_table(
+        "SVM + TF-IDF",
+        y_test,
+        y_pred_svm
+    )
+)
+
+# Random Forest + Word2Vec
+results.append(
+    evaluate_for_table(
+        "RF + Word2Vec",
+        y_test,
+        y_pred_rf
+    )
+)
+
+# Convert to DataFrame
+results_df = pd.DataFrame(results)
+results_df.to_csv("model_comparison_results_bgrams_balancedWeights2_LARGER_LARGER.csv", index=False)
+print("Saved results to model_comparison_results.csv")
+
+print(results_df)
+
+
+"""
 # ---------- Train models ------------
 
 # For BoW + Chi-square + MultinomialNB
@@ -267,4 +443,4 @@ evaluate_model(y_test, preds_tfidf)
 # For Word2Vec + Random Forest
 preds_w2v = clf_w2v.predict(X_test_w2v)
 print("\n---------- Word2Vec + Random Forest -----------")
-evaluate_model(y_test, preds_w2v)
+evaluate_model(y_test, preds_w2v)"""
